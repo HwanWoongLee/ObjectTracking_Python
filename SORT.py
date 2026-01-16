@@ -5,6 +5,16 @@ from typing import List
 
 
 def iou(box1, box2):
+    """
+    Intersection over Union (IoU) 계산
+
+    Args:
+        box1: [x1, y1, x2, y2]
+        box2: [x1, y1, x2, y2]
+
+    Returns:
+        IoU 값 (0.0 ~ 1.0)
+    """
     x1 = max(box1[0], box2[0])
     y1 = max(box1[1], box2[1])
     x2 = min(box1[2], box2[2])
@@ -19,6 +29,7 @@ def iou(box1, box2):
 
 
 class KalmanTracker:
+    """SORT용 Kalman Filter 기반 Tracker"""
     count = 0
 
     def __init__(self, bbox: np.ndarray):
@@ -87,6 +98,7 @@ class KalmanTracker:
         self.age = 0
 
     def _bbox_to_state(self, bbox: np.ndarray) -> np.ndarray:
+        """bounding box를 Kalman filter 상태 벡터로 변환"""
         w = bbox[2] - bbox[0]
         h = bbox[3] - bbox[1]
         return np.array(
@@ -100,12 +112,14 @@ class KalmanTracker:
         )
 
     def _state_to_bbox(self, state: np.ndarray) -> np.ndarray:
+        """Kalman filter 상태 벡터를 bounding box로 변환"""
         cx, cy, area, ratio = state.flatten()[:4]
         w = np.sqrt(max(area * ratio, 1))
         h = area / (w + 1e-6)
         return np.array([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2])
 
     def predict(self) -> np.ndarray:
+        """Kalman filter로 다음 상태 예측"""
         if self.kf.statePost[2] + self.kf.statePost[6] <= 0:
             self.kf.statePost[6] = 0
 
@@ -122,6 +136,7 @@ class KalmanTracker:
         return self._state_to_bbox(predicted)
 
     def update(self, bbox: np.ndarray):
+        """detection으로 Kalman filter 상태 업데이트"""
         self.time_since_update = 0
         self.hits += 1
         self.hit_streak += 1
@@ -130,11 +145,20 @@ class KalmanTracker:
         self.kf.correct(measurement)
 
     def get_state(self) -> np.ndarray:
+        """현재 tracker의 bounding box 반환"""
         return self._state_to_bbox(self.kf.statePost)
 
 
-class Sort:
+class SORT:
+    """SORT: Simple Online and Realtime Tracking"""
+
     def __init__(self, max_age: int = 3, min_hits: int = 3, iou_threshold: float = 0.3):
+        """
+        Args:
+            max_age: tracker가 매칭 안될 때 최대 유지 프레임 수
+            min_hits: 출력하기 위한 최소 히트 수
+            iou_threshold: IoU 매칭 임계값
+        """
         self.max_age = max_age
         self.min_hits = min_hits
         self.iou_threshold = iou_threshold
@@ -142,6 +166,13 @@ class Sort:
         self.frame_count = 0
 
     def update(self, detections: np.ndarray) -> np.ndarray:
+        """
+        Args:
+            detections: (N, 4+) [x1, y1, x2, y2, ...] detection 결과
+
+        Returns:
+            tracks: (M, 5) [x1, y1, x2, y2, track_id]
+        """
         # 1. 프레임 카운트 증가
         self.frame_count += 1
 
@@ -187,6 +218,18 @@ class Sort:
         return self._get_output()
 
     def _match(self, dets: np.ndarray, trks: np.ndarray):
+        """
+        IoU 기반 Hungarian Algorithm 매칭
+
+        Args:
+            dets: detection boxes (N, 4)
+            trks: predicted tracker boxes (M, 4)
+
+        Returns:
+            matched: 매칭된 (detection_idx, tracker_idx) 리스트
+            unmatched_dets: 매칭 안된 detection 인덱스 리스트
+            unmatched_trks: 매칭 안된 tracker 인덱스 리스트
+        """
         cost_matrix = np.zeros((len(dets), len(trks)))
         for d in range(len(dets)):
             for t in range(len(trks)):
